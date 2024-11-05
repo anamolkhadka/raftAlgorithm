@@ -1,0 +1,24 @@
+Raft Consensus Algorithm.
+
+Requirement Analysis:
+
+- Implement Raft Consensus algorithm where Raft achieves fault-tolerance consensus, handle leader election, maintain log consistency, and manage distributed state transitions.
+- Nodes will communicate with each other using gRPC and each node must be containerized using Docker.
+- Use two languages to implement Raft.
+- State of each node: Follower -> Candidate -> Leader
+
+Q1 . Leader Election
+- Two timeout settings in Raft: heartbeat timeout and election timeout.
+- Heartbeat timeout should be set at 100ms for all the processes.
+- Election timeout should be chosen randomly form a fixed interval, [150ms, 300ms] for each node/process.
+- A process implements its term, votes for iteself and sends RequestVote RPCs to other processes in the cluster/group.
+- If majority votes are received, it becomes leader and sends AppendEnries RPCs to all other processes as heartbeat.
+- If another candidate wins the election first or the node fails to get the majority, it reverts to the follower state and 
+waits for further heartbeats.
+- For every RPC the sender should print,
+"Process <ID> sends RPC <RPC name> to Process <ID>
+- The receiver should print,
+"Process <ID> receives RPC <RPC name> to Process <ID>
+- Each process/node be containerized in a separate Docker container.
+- There should be atleast 5 processes forming the logical group. Some processes should be implemented using one language and
+other processes should use the other language.
