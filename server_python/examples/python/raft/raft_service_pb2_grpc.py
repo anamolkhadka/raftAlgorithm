@@ -44,6 +44,11 @@ class RaftServiceStub(object):
                 request_serializer=raft__service__pb2.AppendEntriesRequest.SerializeToString,
                 response_deserializer=raft__service__pb2.AppendEntriesResponse.FromString,
                 _registered_method=True)
+        self.ClientRequest = channel.unary_unary(
+                '/raft.RaftService/ClientRequest',
+                request_serializer=raft__service__pb2.ClientRequestMessage.SerializeToString,
+                response_deserializer=raft__service__pb2.ClientResponseMessage.FromString,
+                _registered_method=True)
 
 
 class RaftServiceServicer(object):
@@ -61,6 +66,13 @@ class RaftServiceServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def ClientRequest(self, request, context):
+        """New RPC
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_RaftServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -73,6 +85,11 @@ def add_RaftServiceServicer_to_server(servicer, server):
                     servicer.AppendEntries,
                     request_deserializer=raft__service__pb2.AppendEntriesRequest.FromString,
                     response_serializer=raft__service__pb2.AppendEntriesResponse.SerializeToString,
+            ),
+            'ClientRequest': grpc.unary_unary_rpc_method_handler(
+                    servicer.ClientRequest,
+                    request_deserializer=raft__service__pb2.ClientRequestMessage.FromString,
+                    response_serializer=raft__service__pb2.ClientResponseMessage.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -129,6 +146,33 @@ class RaftService(object):
             '/raft.RaftService/AppendEntries',
             raft__service__pb2.AppendEntriesRequest.SerializeToString,
             raft__service__pb2.AppendEntriesResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ClientRequest(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/raft.RaftService/ClientRequest',
+            raft__service__pb2.ClientRequestMessage.SerializeToString,
+            raft__service__pb2.ClientResponseMessage.FromString,
             options,
             channel_credentials,
             insecure,

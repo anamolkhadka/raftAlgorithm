@@ -58,3 +58,17 @@ class LogEntry(_message.Message):
     term: int
     command: str
     def __init__(self, index: _Optional[int] = ..., term: _Optional[int] = ..., command: _Optional[str] = ...) -> None: ...
+
+class ClientRequestMessage(_message.Message):
+    __slots__ = ("command",)
+    COMMAND_FIELD_NUMBER: _ClassVar[int]
+    command: str
+    def __init__(self, command: _Optional[str] = ...) -> None: ...
+
+class ClientResponseMessage(_message.Message):
+    __slots__ = ("success", "message")
+    SUCCESS_FIELD_NUMBER: _ClassVar[int]
+    MESSAGE_FIELD_NUMBER: _ClassVar[int]
+    success: bool
+    message: str
+    def __init__(self, success: bool = ..., message: _Optional[str] = ...) -> None: ...
