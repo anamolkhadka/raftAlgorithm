@@ -26,6 +26,9 @@ class RaftServer(raft_service_pb2_grpc.RaftServiceServicer):
     def __init__(self, server_id, peers):
         self.server_id = server_id
         self.peers = peers  # List of other server addresses
+        self.leader_id = None  # Initialize leader_id to track the current leader
+        self.unreachable_peers = {}  # Track unreachable peers and their retry times
+        self.retry_interval = 5  # Retry unreachable peers every 5 seconds
         self.current_term = 0
         self.voted_for = None
         self.state = "Follower"  # Follower, Candidate, Leader
@@ -67,6 +70,14 @@ class RaftServer(raft_service_pb2_grpc.RaftServiceServicer):
             threading.Thread(target=self.request_vote_from_peer, args=(peer,)).start()
 
     def request_vote_from_peer(self, peer):
+        # Check if the peer is in the unreachable list and if its retry timer has passed
+        if peer in self.unreachable_peers:
+            if time.time() < self.unreachable_peers[peer]:
+                print(f"Process {self.server_id}: Skipping unreachable peer {peer} for RequestVote.")
+                return  # Skip if still within retry interval
+            else:
+                print(f"Process {self.server_id}: Retrying previously unreachable peer {peer} for RequestVote.")
+        
         with grpc.insecure_channel(peer) as channel:
             stub = raft_service_pb2_grpc.RaftServiceStub(channel)
             request = RequestVoteRequest(
@@ -85,13 +96,20 @@ class RaftServer(raft_service_pb2_grpc.RaftServiceServicer):
                         print(f"Process {self.server_id} transitions to Leader for term {self.current_term}")
                         self.initialize_leader_state()
                         self.start_heartbeat_timer()
+                # Remove peer from unreachable list if it responds successfully.
+                if peer in self.unreachable_peers:
+                    del self.unreachable_peers[peer]
             except grpc.RpcError as e:
                 print(f"RPC error while contacting Process {peer}: {e}")
+                # Mark the peer as unreachable and set a new retry time
+                self.unreachable_peers[peer] = time.time() + self.retry_interval
 
     def initialize_leader_state(self):
+        self.leader_id = self.server_id  # Set leader_id to self
         for peer in self.peers:
             self.next_index[peer] = len(self.logs)
             self.match_index[peer] = -1
+        self.send_heartbeat()  # Immediately send heartbeats after election
 
     def send_heartbeat(self):
         if self.state == "Leader":
@@ -101,6 +119,13 @@ class RaftServer(raft_service_pb2_grpc.RaftServiceServicer):
             self.start_heartbeat_timer()  # Schedule next heartbeat
 
     def append_entries_to_peer(self, peer):
+        if peer in self.unreachable_peers:
+            if time.time() < self.unreachable_peers[peer]:
+                print(f"Process {self.server_id}: Skipping unreachable peer {peer} for AppendEntries.")
+                return  # Skip if still within retry interval
+            else:
+                print(f"Process {self.server_id}: Retrying previously unreachable peer {peer} for AppendEntries.")
+        
         with grpc.insecure_channel(peer) as channel:
             stub = raft_service_pb2_grpc.RaftServiceStub(channel)
             prev_log_index = self.next_index[peer] - 1
@@ -125,8 +150,13 @@ class RaftServer(raft_service_pb2_grpc.RaftServiceServicer):
                     self.next_index[peer] = len(self.logs)
                 else:
                     self.next_index[peer] -= 1  # Decrement and retry
+                # Remove peer from unreachable list if it responds successfully
+                if peer in self.unreachable_peers:
+                    del self.unreachable_peers[peer]
             except grpc.RpcError as e:
-                print(f"RPC error while contacting Process {peer}: {e}")
+                print(f"Process {self.server_id}: Failed to contact peer {peer} for AppendEntries. Error: {e.details()} - {e.code()}")
+                # Mark the peer as unreachable and set a new retry time
+                self.unreachable_peers[peer] = time.time() + self.retry_interval
     
     def get_leader_address(self):
         if self.leader_id is not None:
@@ -143,12 +173,16 @@ class RaftServer(raft_service_pb2_grpc.RaftServiceServicer):
                 with grpc.insecure_channel(leader_address) as channel:
                     stub = raft_service_pb2_grpc.RaftServiceStub(channel)
                     forward_request = ClientRequestMessage(command=request.command)
-                    forward_response = stub.ClientRequest(forward_request)
-                    return forward_response
+                    try:
+                        forward_response = stub.ClientRequest(forward_request)
+                        return forward_response
+                    except grpc.RpcError as e:
+                        print(f"Failed to forward to leader {leader_address}: {e.details()}")
+                        return ClientResponseMessage(success=False, message="Leader unreachable")
             else:
                 return ClientResponseMessage(success=False, message="No leader available")
         
-        # Append to log and replicate
+        # Leader processes the command
         log_entry = LogEntry(len(self.logs), self.current_term, request.command)
         self.logs.append(log_entry)
         self.replicate_log()
@@ -179,6 +213,7 @@ class RaftServer(raft_service_pb2_grpc.RaftServiceServicer):
         if request.term >= self.current_term:
             self.current_term = request.term
             self.state = "Follower"
+            self.leader_id = request.leaderId  # Update leader_id on receiving heartbeat
             self.reset_election_timer()
             # Validate log consistency
             if request.prevLogIndex == -1 or (
