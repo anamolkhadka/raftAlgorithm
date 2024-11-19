@@ -3,7 +3,15 @@ import time
 import threading
 import random
 from concurrent import futures
-from raft_service_pb2 import RequestVoteRequest, RequestVoteResponse, AppendEntriesResponse, AppendEntriesRequest
+from raft_service_pb2 import (
+    RequestVoteRequest, 
+    RequestVoteResponse, 
+    AppendEntriesResponse, 
+    AppendEntriesRequest,
+    ClientRequestMessage,
+    ClientResponseMessage,
+    LogEntry as ProtoLogEntry,
+)
 import raft_service_pb2_grpc
 
 
@@ -18,6 +26,9 @@ class RaftServer(raft_service_pb2_grpc.RaftServiceServicer):
     def __init__(self, server_id, peers):
         self.server_id = server_id
         self.peers = peers  # List of other server addresses
+        self.leader_id = None  # Initialize leader_id to track the current leader
+        self.unreachable_peers = {}  # Track unreachable peers and their retry times
+        self.retry_interval = 5  # Retry unreachable peers every 5 seconds
         self.current_term = 0
         self.voted_for = None
         self.state = "Follower"  # Follower, Candidate, Leader
@@ -49,16 +60,24 @@ class RaftServer(raft_service_pb2_grpc.RaftServiceServicer):
         self.current_term += 1
         self.voted_for = self.server_id
         self.vote_count = 1  # Vote for itself
-        print(f"Server {self.server_id} became Candidate for term {self.current_term}")
+        print(f"Process {self.server_id} transitions to Candidate for term {self.current_term}")
         self.reset_election_timer()  # Reset election timer for a new term
         self.send_request_vote()
 
     def send_request_vote(self):
-        print(f"Server {self.server_id} sends RequestVote RPCs to peers")
+        print(f"Process {self.server_id} sends RPC RequestVote to peers")
         for peer in self.peers:
             threading.Thread(target=self.request_vote_from_peer, args=(peer,)).start()
 
     def request_vote_from_peer(self, peer):
+        # Check if the peer is in the unreachable list and if its retry timer has passed
+        if peer in self.unreachable_peers:
+            if time.time() < self.unreachable_peers[peer]:
+                print(f"Process {self.server_id}: Skipping unreachable peer {peer} for RequestVote.")
+                return  # Skip if still within retry interval
+            else:
+                print(f"Process {self.server_id}: Retrying previously unreachable peer {peer} for RequestVote.")
+        
         with grpc.insecure_channel(peer) as channel:
             stub = raft_service_pb2_grpc.RaftServiceStub(channel)
             request = RequestVoteRequest(
@@ -69,40 +88,50 @@ class RaftServer(raft_service_pb2_grpc.RaftServiceServicer):
             )
             try:
                 response = stub.RequestVote(request)
-                print(f"Server {self.server_id} received RequestVoteResponse from {peer}: {response.voteGranted}")
+                print(f"Process {self.server_id} receives RPC RequestVoteResponse from Process {peer}: {response.voteGranted}")
                 if response.voteGranted:
                     self.vote_count += 1
                     if self.vote_count > len(self.peers) // 2:
                         self.state = "Leader"
-                        print(f"Server {self.server_id} becomes Leader for term {self.current_term}")
+                        print(f"Process {self.server_id} transitions to Leader for term {self.current_term}")
                         self.initialize_leader_state()
                         self.start_heartbeat_timer()
+                # Remove peer from unreachable list if it responds successfully.
+                if peer in self.unreachable_peers:
+                    del self.unreachable_peers[peer]
             except grpc.RpcError as e:
-                print(f"RPC error while contacting {peer}: {e}")
+                print(f"RPC error while contacting Process {peer}: {e}")
+                # Mark the peer as unreachable and set a new retry time
+                self.unreachable_peers[peer] = time.time() + self.retry_interval
 
     def initialize_leader_state(self):
+        self.leader_id = self.server_id  # Set leader_id to self
         for peer in self.peers:
             self.next_index[peer] = len(self.logs)
             self.match_index[peer] = -1
+        self.send_heartbeat()  # Immediately send heartbeats after election
 
     def send_heartbeat(self):
         if self.state == "Leader":
-            print(f"Server {self.server_id} sends heartbeat to peers")
+            print(f"Process {self.server_id} sends AppendEntries (heartbeat) to peers")
             for peer in self.peers:
                 threading.Thread(target=self.append_entries_to_peer, args=(peer,)).start()
             self.start_heartbeat_timer()  # Schedule next heartbeat
 
     def append_entries_to_peer(self, peer):
+        if peer in self.unreachable_peers:
+            if time.time() < self.unreachable_peers[peer]:
+                print(f"Process {self.server_id}: Skipping unreachable peer {peer} for AppendEntries.")
+                return  # Skip if still within retry interval
+            else:
+                print(f"Process {self.server_id}: Retrying previously unreachable peer {peer} for AppendEntries.")
+        
         with grpc.insecure_channel(peer) as channel:
             stub = raft_service_pb2_grpc.RaftServiceStub(channel)
             prev_log_index = self.next_index[peer] - 1
             prev_log_term = self.logs[prev_log_index].term if prev_log_index >= 0 else 0
             entries = [
-                AppendEntriesRequest.Entry(
-                    index=log.index,
-                    term=log.term,
-                    command=log.command
-                )
+                ProtoLogEntry(index=log.index, term=log.term, command=log.command)
                 for log in self.logs[self.next_index[peer]:]
             ]
             request = AppendEntriesRequest(
@@ -115,17 +144,58 @@ class RaftServer(raft_service_pb2_grpc.RaftServiceServicer):
             )
             try:
                 response = stub.AppendEntries(request)
-                print(f"Server {self.server_id} received AppendEntriesResponse from {peer}: {response.success}")
+                print(f"Process {self.server_id} receives AppendEntriesResponse from Process {peer}: {response.success}")
                 if response.success:
                     self.match_index[peer] = len(self.logs) - 1
                     self.next_index[peer] = len(self.logs)
                 else:
                     self.next_index[peer] -= 1  # Decrement and retry
+                # Remove peer from unreachable list if it responds successfully
+                if peer in self.unreachable_peers:
+                    del self.unreachable_peers[peer]
             except grpc.RpcError as e:
-                print(f"RPC error while contacting {peer}: {e}")
+                print(f"Process {self.server_id}: Failed to contact peer {peer} for AppendEntries. Error: {e.details()} - {e.code()}")
+                # Mark the peer as unreachable and set a new retry time
+                self.unreachable_peers[peer] = time.time() + self.retry_interval
+    
+    def get_leader_address(self):
+        if self.leader_id is not None and 0 < self.leader_id <= len(self.peers):
+            leader_index = self.leader_id - 1  # Assuming IDs are 1-based
+            return self.peers[leader_index]
+        print(f"Process {self.server_id}: No valid leader_id found")
+        return None
+
+    def ClientRequest(self, request, context):
+        print(f"Process {self.server_id} received ClientRequest: {request.command}")
+        if self.state != "Leader":
+            # Forward to the leader
+            leader_address = self.get_leader_address()
+            if leader_address:
+                with grpc.insecure_channel(leader_address) as channel:
+                    stub = raft_service_pb2_grpc.RaftServiceStub(channel)
+                    forward_request = ClientRequestMessage(command=request.command)
+                    try:
+                        forward_response = stub.ClientRequest(forward_request)
+                        return forward_response
+                    except grpc.RpcError as e:
+                        print(f"Failed to forward to leader {leader_address}: {e.details()}")
+                        return ClientResponseMessage(success=False, message="Leader unreachable")
+            else:
+                return ClientResponseMessage(success=False, message="No leader available")
+        
+        # Leader processes the command
+        log_entry = LogEntry(len(self.logs), self.current_term, request.command)
+        self.logs.append(log_entry)
+        self.replicate_log()
+        return ClientResponseMessage(success=True, message="Command applied")
+
+    def replicate_log(self):
+        print(f"Process {self.server_id} replicates log entries to followers")
+        for peer in self.peers:
+            threading.Thread(target=self.append_entries_to_peer, args=(peer,)).start()
 
     def RequestVote(self, request, context):
-        print(f"Server {self.server_id} received RequestVote from {request.candidateId}")
+        print(f"Process {self.server_id} receives RPC RequestVote from Process {request.candidateId}")
         vote_granted = False
         if request.term > self.current_term:
             self.current_term = request.term
@@ -135,14 +205,16 @@ class RaftServer(raft_service_pb2_grpc.RaftServiceServicer):
             self.voted_for = request.candidateId
             vote_granted = True
             self.reset_election_timer()
+            print(f"Process {self.server_id} grants vote to Process {request.candidateId}: {vote_granted}")
         return RequestVoteResponse(term=self.current_term, voteGranted=vote_granted)
 
     def AppendEntries(self, request, context):
-        print(f"Server {self.server_id} received AppendEntries from {request.leaderId}")
+        print(f"Process {self.server_id} receives RPC AppendEntries from Process {request.leaderId}")
         success = False
         if request.term >= self.current_term:
             self.current_term = request.term
             self.state = "Follower"
+            self.leader_id = request.leaderId  # Update leader_id on receiving heartbeat
             self.reset_election_timer()
             # Validate log consistency
             if request.prevLogIndex == -1 or (
@@ -150,13 +222,18 @@ class RaftServer(raft_service_pb2_grpc.RaftServiceServicer):
                 and self.logs[request.prevLogIndex].term == request.prevLogTerm
             ):
                 success = True
-                # Append new entries
-                self.logs = self.logs[:request.prevLogIndex + 1] + [
-                    LogEntry(entry.index, entry.term, entry.command) for entry in request.entries
-                ]
-                # Update commit index
-                if request.leaderCommit > self.commit_index:
-                    self.commit_index = min(request.leaderCommit, len(self.logs) - 1)
+                # Append new entries if applicable
+                try:
+                    self.logs = self.logs[:request.prevLogIndex + 1] + [
+                        LogEntry(entry.index, entry.term, entry.command) for entry in request.entries
+                    ]
+                    # Update commit index
+                    if request.leaderCommit > self.commit_index:
+                        self.commit_index = min(request.leaderCommit, len(self.logs) - 1)
+                except IndexError:
+                    print(f"Process {self.server_id}: IndexError during log replication")
+                    success = False
+        print(f"Process {self.server_id}: AppendEntries success: {success}")
         return AppendEntriesResponse(term=self.current_term, success=success)
 
 
@@ -164,13 +241,13 @@ def serve(server_id, port, peers):
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
     raft_service_pb2_grpc.add_RaftServiceServicer_to_server(RaftServer(server_id, peers), server)
     server.add_insecure_port(f'[::]:{port}')
-    print(f"Server {server_id} started, listening on {port}")
+    print(f"Process {server_id} started, listening on {port}")
     server.start()
     try:
         server.wait_for_termination()
     except KeyboardInterrupt:
-        print(f"Server {server_id} shutting down")
-
+        print(f"Process {server_id} shutting down")
+        server.stop(0)  # Gracefully stop the server
 
 if __name__ == "__main__":
     import sys

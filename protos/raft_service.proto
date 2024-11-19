@@ -5,6 +5,7 @@ package raft;
 service RaftService {
     rpc RequestVote(RequestVoteRequest) returns (RequestVoteResponse);
     rpc AppendEntries(AppendEntriesRequest) returns (AppendEntriesResponse);
+    rpc ClientRequest(ClientRequestMessage) returns (ClientResponseMessage); // New RPC
 }
 
 message RequestVoteRequest {
@@ -37,4 +38,14 @@ message LogEntry {
     int32 index = 1;
     int32 term = 2;
     string command = 3;
+}
+
+// New message types for client communication
+message ClientRequestMessage {
+    string command = 1; // The operation requested by the client
+}
+
+message ClientResponseMessage {
+    bool success = 1;    // Whether the request was successfully processed
+    string message = 2;  // Additional information or result
 }
