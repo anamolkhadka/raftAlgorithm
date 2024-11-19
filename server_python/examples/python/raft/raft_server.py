@@ -159,9 +159,10 @@ class RaftServer(raft_service_pb2_grpc.RaftServiceServicer):
                 self.unreachable_peers[peer] = time.time() + self.retry_interval
     
     def get_leader_address(self):
-        if self.leader_id is not None:
+        if self.leader_id is not None and 0 < self.leader_id <= len(self.peers):
             leader_index = self.leader_id - 1  # Assuming IDs are 1-based
             return self.peers[leader_index]
+        print(f"Process {self.server_id}: No valid leader_id found")
         return None
 
     def ClientRequest(self, request, context):
@@ -221,13 +222,17 @@ class RaftServer(raft_service_pb2_grpc.RaftServiceServicer):
                 and self.logs[request.prevLogIndex].term == request.prevLogTerm
             ):
                 success = True
-                # Append new entries
-                self.logs = self.logs[:request.prevLogIndex + 1] + [
-                    LogEntry(entry.index, entry.term, entry.command) for entry in request.entries
-                ]
-                # Update commit index
-                if request.leaderCommit > self.commit_index:
-                    self.commit_index = min(request.leaderCommit, len(self.logs) - 1)
+                # Append new entries if applicable
+                try:
+                    self.logs = self.logs[:request.prevLogIndex + 1] + [
+                        LogEntry(entry.index, entry.term, entry.command) for entry in request.entries
+                    ]
+                    # Update commit index
+                    if request.leaderCommit > self.commit_index:
+                        self.commit_index = min(request.leaderCommit, len(self.logs) - 1)
+                except IndexError:
+                    print(f"Process {self.server_id}: IndexError during log replication")
+                    success = False
         print(f"Process {self.server_id}: AppendEntries success: {success}")
         return AppendEntriesResponse(term=self.current_term, success=success)
 
