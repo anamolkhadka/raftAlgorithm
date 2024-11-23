@@ -6,6 +6,8 @@ service RaftService {
     rpc RequestVote(RequestVoteRequest) returns (RequestVoteResponse);
     rpc AppendEntries(AppendEntriesRequest) returns (AppendEntriesResponse);
     rpc ClientRequest(ClientRequestMessage) returns (ClientResponseMessage); // New RPC
+    rpc GetStatus(GetStatusRequest) returns (GetStatusResponse);
+    rpc GetLog(GetLogRequest) returns (GetLogResponse);
 }
 
 message RequestVoteRequest {
@@ -48,4 +50,21 @@ message ClientRequestMessage {
 message ClientResponseMessage {
     bool success = 1;    // Whether the request was successfully processed
     string message = 2;  // Additional information or result
+}
+
+message GetStatusRequest {}
+
+message GetStatusResponse {
+    string state = 1;         // State of the server (Leader, Follower, Candidate)
+    int32 current_term = 2;   // Current term of the server
+    int32 voted_for = 3;      // The ID of the server this node voted for
+    int32 leader_id = 4;      // The ID of the current leader
+}
+
+message GetLogRequest {
+    // Optional fields if needed
+}
+
+message GetLogResponse {
+    repeated LogEntry entries = 1; // List of log entries
 }

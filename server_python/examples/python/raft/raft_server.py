@@ -11,6 +11,8 @@ from raft_service_pb2 import (
     ClientRequestMessage,
     ClientResponseMessage,
     LogEntry as ProtoLogEntry,
+    GetStatusResponse,
+    GetLogResponse
 )
 import raft_service_pb2_grpc
 
@@ -117,6 +119,39 @@ class RaftServer(raft_service_pb2_grpc.RaftServiceServicer):
             for peer in self.peers:
                 threading.Thread(target=self.append_entries_to_peer, args=(peer,)).start()
             self.start_heartbeat_timer()  # Schedule next heartbeat
+    
+    # Get status method for test script.
+    def GetStatus(self, request, context):
+        """
+        Handle GetStatus RPC to provide the server's current status.
+        """
+        print(f"Process {self.server_id} responding to GetStatus request.")
+        return GetStatusResponse(
+            state=self.state,
+            current_term=self.current_term,
+            voted_for=self.voted_for if self.voted_for is not None else -1,
+            leader_id=self.leader_id if self.leader_id is not None else -1
+        )
+    
+    def to_proto_log_entry(self, log_entry):
+        """
+        Convert internal LogEntry to ProtoLogEntry.
+        """
+        return ProtoLogEntry(
+            index=log_entry.index,
+            term=log_entry.term,
+            command=log_entry.command
+        )
+
+    def GetLog(self, request, context):
+        """
+        Handle GetLog RPC to provide the server's log entries.
+        """
+        print(f"Process {self.server_id} responding to GetLog request.")
+        proto_logs = [self.to_proto_log_entry(log) for log in self.logs]
+        return GetLogResponse(entries=proto_logs)
+
+
 
     def append_entries_to_peer(self, peer):
         if peer in self.unreachable_peers:
