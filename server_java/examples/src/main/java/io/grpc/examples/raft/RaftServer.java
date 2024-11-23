@@ -7,22 +7,24 @@ import java.io.IOException;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.logging.Logger;
+import raft.RaftServiceGrpc;
+import raft.RaftServiceOuterClass.*;
 
 public class RaftServer {
     private static final Logger logger = Logger.getLogger(RaftServer.class.getName());
 
     private final int serverId;
-    private final List<String> peers; // Store peers
+    private final List<String> peers;
     private final int port;
     private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(1);
     private Server server;
 
-    private String state = "Follower"; // States: Follower, Candidate, Leader
+    private String state = "Follower";
     private int currentTerm = 0;
     private Integer votedFor = null;
+    private Integer leaderId = null;
     private final List<LogEntry> logs = new ArrayList<>();
     private long lastHeartbeat = System.currentTimeMillis();
-
     private final Random random = new Random();
 
     public RaftServer(int serverId, int port, List<String> peers) {
@@ -56,15 +58,26 @@ public class RaftServer {
         state = "Candidate";
         currentTerm++;
         votedFor = serverId;
+        leaderId = null; // Reset leaderId during elections
         logger.info("Server " + serverId + " became Candidate for term " + currentTerm);
 
-        // Send RequestVote to all peers
+        int votes = 1; // Vote for itself
         for (String peer : peers) {
-            sendRequestVote(peer);
+            boolean voteGranted = sendRequestVote(peer);
+            if (voteGranted) {
+                votes++;
+            }
+        }
+
+        if (votes > peers.size() / 2) {
+            state = "Leader";
+            leaderId = serverId;
+            logger.info("Server " + serverId + " became Leader for term " + currentTerm);
+            startHeartbeatTimer();
         }
     }
 
-    private void sendRequestVote(String peer) {
+    private boolean sendRequestVote(String peer) {
         ManagedChannel channel = ManagedChannelBuilder.forTarget(peer).usePlaintext().build();
         RaftServiceGrpc.RaftServiceBlockingStub stub = RaftServiceGrpc.newBlockingStub(channel);
         RequestVoteRequest request = RequestVoteRequest.newBuilder()
@@ -76,9 +89,10 @@ public class RaftServer {
         try {
             RequestVoteResponse response = stub.requestVote(request);
             logger.info("Server " + serverId + " received RequestVoteResponse from peer: " + peer);
-            if (response.getVoteGranted()) {
-                // Handle votes (implement majority logic)
-            }
+            return response.getVoteGranted();
+        } catch (Exception e) {
+            logger.warning("Failed to send RequestVote to peer " + peer + ": " + e.getMessage());
+            return false;
         } finally {
             channel.shutdown();
         }
@@ -106,6 +120,8 @@ public class RaftServer {
         try {
             AppendEntriesResponse response = stub.appendEntries(request);
             logger.info("Server " + serverId + " received AppendEntriesResponse from peer: " + peer);
+        } catch (Exception e) {
+            logger.warning("Failed to send AppendEntries to peer " + peer + ": " + e.getMessage());
         } finally {
             channel.shutdown();
         }
@@ -149,13 +165,48 @@ public class RaftServer {
         public void appendEntries(AppendEntriesRequest request,
                 StreamObserver<AppendEntriesResponse> responseObserver) {
             logger.info("Server " + serverId + " received AppendEntries from " + request.getLeaderId());
-            boolean success = request.getTerm() >= currentTerm;
-            if (success) {
+            boolean success = false;
+            if (request.getTerm() >= currentTerm) {
                 currentTerm = request.getTerm();
+                leaderId = request.getLeaderId();
                 lastHeartbeat = System.currentTimeMillis();
+                success = true;
             }
             responseObserver
                     .onNext(AppendEntriesResponse.newBuilder().setTerm(currentTerm).setSuccess(success).build());
+            responseObserver.onCompleted();
+        }
+
+        @Override
+        public void clientRequest(ClientRequestMessage request,
+                StreamObserver<ClientResponseMessage> responseObserver) {
+            logger.info("Server " + serverId + " received ClientRequest: " + request.getCommand());
+            if (!state.equals("Leader")) {
+                if (leaderId != null) {
+                    String leaderAddress = "localhost:" + (5000 + leaderId);
+                    logger.info("Server " + serverId + " forwarding request to leader at " + leaderAddress);
+                    ManagedChannel channel = ManagedChannelBuilder.forTarget(leaderAddress).usePlaintext().build();
+                    RaftServiceGrpc.RaftServiceBlockingStub stub = RaftServiceGrpc.newBlockingStub(channel);
+                    try {
+                        ClientResponseMessage response = stub.clientRequest(request);
+                        responseObserver.onNext(response);
+                    } catch (Exception e) {
+                        logger.warning("Failed to forward request to leader: " + e.getMessage());
+                        responseObserver.onNext(ClientResponseMessage.newBuilder().setSuccess(false)
+                                .setMessage("Leader unreachable").build());
+                    } finally {
+                        channel.shutdown();
+                    }
+                } else {
+                    responseObserver.onNext(ClientResponseMessage.newBuilder().setSuccess(false)
+                            .setMessage("No leader available").build());
+                }
+            } else {
+                logs.add(LogEntry.newBuilder().setIndex(logs.size()).setTerm(currentTerm)
+                        .setCommand(request.getCommand()).build());
+                responseObserver.onNext(
+                        ClientResponseMessage.newBuilder().setSuccess(true).setMessage("Command applied").build());
+            }
             responseObserver.onCompleted();
         }
     }
