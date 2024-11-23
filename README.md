@@ -68,7 +68,7 @@ The system is composed of:
 - cd server_java/examples
 - Build command ./gradlew installDist.
 - Run command ./build/install/examples/bin/raft_server <serverId> <port> <peer1> <peer2> ...
-- E.g. ./build/install/examples/bin/raft_server 5 5005 localhost:5001 localhost:5002 localhost:5003 localhost:5004
+- E.g. ./build/install/examples/bin/raft-server 5 5005 localhost:5001 localhost:5002 localhost:5003 localhost:5004
 
 ### **Start the Python Server**
 - cd raftAlgorithm/server_python/examples/python/raft
@@ -91,7 +91,7 @@ The system is composed of:
 - kill -9 <PID> to kill it completely before running the servers cluster. OR
 - kill -9 $(lsof -t -i :5001) to kill all process in the given port.
 
-# Running the test cases
+### Running the Unit test cases
 - Starts the Servers Manually like before. Open 5 terminals and run the following commands. 1 in each.
 - python raft_server.py 1 5001 localhost:5002 localhost:5003 localhost:5004 localhost:5005
 - python raft_server.py 2 5002 localhost:5001 localhost:5003 localhost:5004 localhost:5005
@@ -103,3 +103,16 @@ The system is composed of:
 - python -m unittest test_raft.py
 - Follow the instruction. For killing the leader. Ctrl + c.
 - See the test cases results.
+
+
+## **Running the Project with Docker**
+- cd raftAlgorithm
+- Build the Images. docker-compose build
+- Run the containers. docker-compose up
+- Check Logs. docker-compose logs -f
+- Stop the Containers. docker-compose down or stop from the docker desktop.
+
+### Testing with Docker
+- You can see the logs inside the docker container to see the log replication and leader election entries.
+- For testing with raft_client.py and unit test case test_raft.py, please follow the local approach as instructed above. These test cases
+does not run as intented with the docker containers.

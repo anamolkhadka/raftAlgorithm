@@ -1,0 +1,21 @@
+# Base image
+FROM python:3.9-slim
+
+# Set working directory
+WORKDIR /app
+
+# Copy necessary files into the container
+COPY server_python/examples/python/raft /app
+COPY protos /app/protos
+
+# Install dependencies
+RUN pip install grpcio grpcio-tools
+
+# Generate gRPC stubs
+RUN python -m grpc_tools.protoc -Iprotos --python_out=. --pyi_out=. --grpc_python_out=. protos/raft_service.proto
+
+# Expose the port dynamically (server-specific)
+EXPOSE 5001
+
+# Default command for Python servers (can be overridden in docker-compose)
+CMD ["python", "raft_server.py"]

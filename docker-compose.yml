@@ -1,0 +1,80 @@
+# services:
+#   python-node1:
+#     build:
+#       context: .
+#       dockerfile: server_python/examples/python/raft/Dockerfile-python
+#     ports:
+#       - "5001:5001"
+#     command: python raft_server.py 1 5001 localhost:5002 localhost:5003 localhost:5004 localhost:5005
+
+#   python-node2:
+#     build:
+#       context: .
+#       dockerfile: server_python/examples/python/raft/Dockerfile-python
+#     ports:
+#       - "5002:5002"
+#     command: python raft_server.py 2 5002 localhost:5001 localhost:5003 localhost:5004 localhost:5005
+
+#   python-node3:
+#     build:
+#       context: .
+#       dockerfile: server_python/examples/python/raft/Dockerfile-python
+#     ports:
+#       - "5003:5003"
+#     command: python raft_server.py 3 5003 localhost:5001 localhost:5002 localhost:5004 localhost:5005
+
+#   python-node4:
+#     build:
+#       context: .
+#       dockerfile: server_python/examples/python/raft/Dockerfile-python
+#     ports:
+#       - "5004:5004"
+#     command: python raft_server.py 4 5004 localhost:5001 localhost:5002 localhost:5003 localhost:5005
+
+#   java-node:
+#     build:
+#       context: .
+#       dockerfile: server_java/examples/Dockerfile-java
+#     ports:
+#       - "5005:5005"
+#     command: ./build/install/examples/bin/raft-server 5 5005 localhost:5001 localhost:5002 localhost:5003 localhost:5004
+services:
+  python-node1:
+    build:
+      context: .
+      dockerfile: server_python/examples/python/raft/Dockerfile-python
+    ports:
+      - "5001:5001"
+    command: python raft_server.py 1 5001 python-node2:5002 python-node3:5003 python-node4:5004 java-node:5005
+
+  python-node2:
+    build:
+      context: .
+      dockerfile: server_python/examples/python/raft/Dockerfile-python
+    ports:
+      - "5002:5002"
+    command: python raft_server.py 2 5002 python-node1:5001 python-node3:5003 python-node4:5004 java-node:5005
+
+  python-node3:
+    build:
+      context: .
+      dockerfile: server_python/examples/python/raft/Dockerfile-python
+    ports:
+      - "5003:5003"
+    command: python raft_server.py 3 5003 python-node1:5001 python-node2:5002 python-node4:5004 java-node:5005
+
+  python-node4:
+    build:
+      context: .
+      dockerfile: server_python/examples/python/raft/Dockerfile-python
+    ports:
+      - "5004:5004"
+    command: python raft_server.py 4 5004 python-node1:5001 python-node2:5002 python-node3:5003 java-node:5005
+
+  java-node:
+    build:
+      context: .
+      dockerfile: server_java/examples/Dockerfile-java
+    ports:
+      - "5005:5005"
+    command: ./build/install/examples/bin/raft-server 5 5005 python-node1:5001 python-node2:5002 python-node3:5003 python-node4:5004

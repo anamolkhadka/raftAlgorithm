@@ -1,0 +1,20 @@
+# Base image
+FROM openjdk:11-jdk-slim
+
+# Set working directory
+WORKDIR /app
+
+# Copy necessary files into the container
+COPY server_java/examples /app
+
+# Run Gradle wrapper to build the Java server
+RUN ./gradlew installDist || (echo "Gradle build failed" && ls -R)
+
+# Verify the build output
+RUN ls -R ./build/install/examples/bin/
+
+# Expose the required port
+EXPOSE 5005
+
+# Command to run the Java server
+CMD ["./build/install/examples/bin/raft-server"]
