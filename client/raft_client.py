@@ -27,6 +27,6 @@ def send_command(server_address, command):
 
 if __name__ == "__main__":
     # Example usage: Send a command to a server at localhost:5001
-    server_address = "localhost:5003"  # Address of any Raft server
+    server_address = "localhost:5002"  # Address of any Raft server
     command = "operation_1"  # The operation to be executed
     send_command(server_address, command)
