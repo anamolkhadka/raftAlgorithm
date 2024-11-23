@@ -66,14 +66,16 @@ The system is composed of:
 
 ### **Start the Java Server**
 - cd server_java/examples
-- Build command ./gradlew installDist. Need to add the peers to this build configuration.
-- Run command ./build/install/examples/bin/raft-server
+- Build command ./gradlew installDist.
+- Run command ./build/install/examples/bin/raft_server <serverId> <port> <peer1> <peer2> ...
+- E.g. ./build/install/examples/bin/raft_server 5 5005 localhost:5001 localhost:5002 localhost:5003 localhost:5004
 
 ### **Start the Python Server**
 - cd raftAlgorithm/server_python/examples/python/raft
 - Generate gRPC stubs: python -m grpc_tools.protoc -I../../protos --python_out=. --pyi_out=. --grpc_python_out=. ../../protos/raft_service.proto
 - Run the server: python raft/raft_server.py <server_id> <port> <peer1> <peer2> ...
-  E.g. python raft_server.py 1 5001 localhost:5002 localhost:5003
+  E.g. python raft_server.py 1 5001 localhost:5002 localhost:5003 localhost:5004 localhost:5005,
+  python raft_server.py 2 5002 localhost:5001 localhost:5003 localhost:5004 localhost:5005, etc.
 - Run four python servers in 4 different terminals.
 
 ### **Start the Python Client**
