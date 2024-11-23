@@ -159,18 +159,26 @@ class RaftServer(raft_service_pb2_grpc.RaftServiceServicer):
                 self.unreachable_peers[peer] = time.time() + self.retry_interval
     
     def get_leader_address(self):
-        if self.leader_id is not None and 0 < self.leader_id <= len(self.peers):
-            leader_index = self.leader_id - 1  # Assuming IDs are 1-based
-            return self.peers[leader_index]
+        """
+        Return the address of the leader based on self.leader_id.
+        """
+        if self.leader_id is not None:
+            leader_port = 5000 + self.leader_id  # Assuming ports are sequential
+            leader_address = f"localhost:{leader_port}"
+            print(f"Process {self.server_id}: Leader ID {self.leader_id} mapped to {leader_address}")
+            return leader_address
         print(f"Process {self.server_id}: No valid leader_id found")
         return None
 
     def ClientRequest(self, request, context):
         print(f"Process {self.server_id} received ClientRequest: {request.command}")
+        print(f"Process {self.server_id}: State = {self.state}, Leader ID = {self.leader_id}, Term = {self.current_term}")
+        
         if self.state != "Leader":
             # Forward to the leader
             leader_address = self.get_leader_address()
             if leader_address:
+                print(f"Process {self.server_id}: Forwarding request to leader at {leader_address}")
                 with grpc.insecure_channel(leader_address) as channel:
                     stub = raft_service_pb2_grpc.RaftServiceStub(channel)
                     forward_request = ClientRequestMessage(command=request.command)
@@ -178,9 +186,10 @@ class RaftServer(raft_service_pb2_grpc.RaftServiceServicer):
                         forward_response = stub.ClientRequest(forward_request)
                         return forward_response
                     except grpc.RpcError as e:
-                        print(f"Failed to forward to leader {leader_address}: {e.details()}")
+                        print(f"Process {self.server_id}: Failed to forward to leader {leader_address}. Error: {e.details()}")
                         return ClientResponseMessage(success=False, message="Leader unreachable")
             else:
+                print(f"Process {self.server_id}: No leader available to forward request.")
                 return ClientResponseMessage(success=False, message="No leader available")
         
         # Leader processes the command
@@ -188,6 +197,7 @@ class RaftServer(raft_service_pb2_grpc.RaftServiceServicer):
         self.logs.append(log_entry)
         self.replicate_log()
         return ClientResponseMessage(success=True, message="Command applied")
+
 
     def replicate_log(self):
         print(f"Process {self.server_id} replicates log entries to followers")
@@ -210,11 +220,14 @@ class RaftServer(raft_service_pb2_grpc.RaftServiceServicer):
 
     def AppendEntries(self, request, context):
         print(f"Process {self.server_id} receives RPC AppendEntries from Process {request.leaderId}")
+        print(f"Process {self.server_id}: Current Leader ID = {self.leader_id}, Received Leader ID = {request.leaderId}")
         success = False
         if request.term >= self.current_term:
             self.current_term = request.term
             self.state = "Follower"
-            self.leader_id = request.leaderId  # Update leader_id on receiving heartbeat
+            if self.leader_id != request.leaderId:  # Log leader_id updates
+                self.leader_id = request.leaderId
+                print(f"Process {self.server_id}: Updated leader_id to {self.leader_id}")
             self.reset_election_timer()
             # Validate log consistency
             if request.prevLogIndex == -1 or (
@@ -233,9 +246,8 @@ class RaftServer(raft_service_pb2_grpc.RaftServiceServicer):
                 except IndexError:
                     print(f"Process {self.server_id}: IndexError during log replication")
                     success = False
-        print(f"Process {self.server_id}: AppendEntries success: {success}")
+        print(f"Process {self.server_id}: AppendEntries success: {success}, Leader ID: {self.leader_id}")
         return AppendEntriesResponse(term=self.current_term, success=success)
-
 
 def serve(server_id, port, peers):
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
