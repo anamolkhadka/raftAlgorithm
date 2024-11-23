@@ -209,5 +209,37 @@ public class RaftServer {
             }
             responseObserver.onCompleted();
         }
+
+        @Override
+        public void getStatus(GetStatusRequest request, StreamObserver<GetStatusResponse> responseObserver) {
+            GetStatusResponse response = GetStatusResponse.newBuilder()
+                    .setState(state)
+                    .setCurrentTerm(currentTerm)
+                    .setVotedFor(votedFor != null ? votedFor : -1)
+                    .setLeaderId(leaderId != null ? leaderId : -1)
+                    .build();
+            responseObserver.onNext(response);
+            responseObserver.onCompleted();
+        }
+
+        @Override
+        public void getLog(GetLogRequest request, StreamObserver<GetLogResponse> responseObserver) {
+            // Build the response with the server's log entries
+            GetLogResponse.Builder responseBuilder = GetLogResponse.newBuilder();
+
+            for (LogEntry logEntry : logs) {
+                LogEntry protoLogEntry = LogEntry.newBuilder()
+                        .setIndex(logEntry.getIndex())
+                        .setTerm(logEntry.getTerm())
+                        .setCommand(logEntry.getCommand())
+                        .build();
+                responseBuilder.addEntries(protoLogEntry);
+            }
+
+            // Send the response
+            responseObserver.onNext(responseBuilder.build());
+            responseObserver.onCompleted();
+        }
+
     }
 }

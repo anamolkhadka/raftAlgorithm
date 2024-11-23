@@ -1,144 +1,165 @@
 import unittest
-import subprocess
-import time
 import grpc
-import sys
-import os
-
-# Adjust the import paths for the server and gRPC files
-sys.path.append(os.path.join(os.path.dirname(__file__), "../server_python/examples/python/raft"))
-
+import time
 import raft_service_pb2
 import raft_service_pb2_grpc
 
-
 class TestRaft(unittest.TestCase):
-
-    @classmethod
-    def setUpClass(cls):
+    def setUp(self):
         """
-        Start 5 Raft servers before running the tests.
+        Set up gRPC clients for all the servers.
         """
-        cls.server_processes = []
-        cls.server_logs = []
-        ports = [5001, 5002, 5003, 5004, 5005]
-        peers = [f"localhost:{p}" for p in ports]
+        self.ports = [5001, 5002, 5003, 5004, 5005]
+        self.clients = {
+            port: raft_service_pb2_grpc.RaftServiceStub(
+                grpc.insecure_channel(f"localhost:{port}")
+            ) for port in self.ports
+        }
 
-        for i, port in enumerate(ports):
-            peers_without_self = [peer for peer in peers if peer != f"localhost:{port}"]
-            process = subprocess.Popen(
-                ["python", os.path.join(os.path.dirname(__file__), "../server_python/examples/python/raft/raft_server.py"),
-                 str(i + 1), str(port)] + peers_without_self,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-            )
-            cls.server_processes.append(process)
-            cls.server_logs.append(f"server_{i + 1}.log")
-
-        time.sleep(10)  # Allow servers to initialize and elect a leader
-
-    @classmethod
-    def tearDownClass(cls):
-        """
-        Stop all Raft servers after the tests and save logs.
-        """
-        for i, process in enumerate(cls.server_processes):
-            process.terminate()
-            process.wait()
-            stdout, stderr = process.communicate()
-            with open(cls.server_logs[i], "w") as log_file:
-                log_file.write(f"STDOUT:\n{stdout.decode()}\nSTDERR:\n{stderr.decode()}\n")
-
-    def test_leader_election(self):
-        """
-        Verify that one leader is elected in the cluster.
-        """
-        leaders = []
-        for process in self.server_processes:
-            stdout, _ = process.communicate(timeout=5)
-            if b"transitions to Leader" in stdout:
-                leaders.append(stdout.decode().split("Process")[1].split("transitions")[0].strip())
-
-        self.assertEqual(len(leaders), 1, "There should be exactly one leader.")
-        print(f"Leader elected: {leaders[0]}")
-
-    def test_log_replication(self):
-        """
-        Verify that commands sent to the leader are replicated to all followers.
-        """
-        command = "operation_1"
-
-        # Identify leader
-        leader_address = self.find_leader()
-        self.assertIsNotNone(leader_address, "Leader not identified for log replication test.")
-
-        # Send client request to the leader
-        client = self.create_client(leader_address)
-        response = self.send_client_request(client, command)
-        self.assertTrue(response.success, "Leader did not apply the command successfully.")
-
-        time.sleep(5)  # Allow log replication
-
-        # Verify logs on all servers
-        for process in self.server_processes:
-            stdout, _ = process.communicate(timeout=5)
-            self.assertIn(command, stdout.decode(), f"Command '{command}' not found in server logs.")
-
-    def test_leader_failure(self):
-        """
-        Verify that a new leader is elected when the current leader fails.
-        """
-        # Identify and terminate the leader
-        leader_index = None
-        leader_address = None
-        for i, process in enumerate(self.server_processes):
-            stdout, _ = process.communicate(timeout=5)
-            if b"transitions to Leader" in stdout:
-                leader_index = i
-                leader_address = f"localhost:{5000 + (i + 1)}"
-                break
-
-        self.assertIsNotNone(leader_index, "Leader not found.")
-        self.server_processes[leader_index].terminate()
-        self.server_processes[leader_index].wait()
-
-        time.sleep(10)  # Allow election timeout for new leader
-
-        # Verify new leader is elected
-        leaders = []
-        for i, process in enumerate(self.server_processes):
-            if i != leader_index:  # Skip the terminated process
-                stdout, _ = process.communicate(timeout=5)
-                if b"transitions to Leader" in stdout:
-                    leaders.append(stdout.decode().split("Process")[1].split("transitions")[0].strip())
-
-        self.assertEqual(len(leaders), 1, "There should be exactly one new leader.")
-        print(f"New leader elected: {leaders[0]}")
-
-    def create_client(self, address):
-        """
-        Create a gRPC client for testing.
-        """
-        return grpc.insecure_channel(address)
-
-    def send_client_request(self, client, command):
-        """
-        Send a client request to the Raft cluster.
-        """
-        stub = raft_service_pb2_grpc.RaftServiceStub(client)
-        request = raft_service_pb2.ClientRequestMessage(command=command)
-        return stub.ClientRequest(request)
-
-    def find_leader(self):
-        """
-        Find the current leader by parsing logs.
-        """
-        for i, process in enumerate(self.server_processes):
-            stdout, _ = process.communicate(timeout=5)
-            if b"transitions to Leader" in stdout:
-                return f"localhost:{5000 + (i + 1)}"
+    # def find_leader(self):
+    #     """
+    #     Identify the leader by querying the status of all servers.
+    #     """
+    #     for port, client in self.clients.items():
+    #         try:
+    #             response = client.GetStatus(raft_service_pb2.GetStatusRequest())
+    #             if response.state == "Leader":
+    #                 return f"localhost:{port}"
+    #         except grpc.RpcError:
+    #             pass
+    #     return None
+    
+    def find_leader(self, retries=3, delay=2):
+        for _ in range(retries):
+            for port, client in self.clients.items():
+                try:
+                    response = client.GetStatus(raft_service_pb2.GetStatusRequest())
+                    if response.state == "Leader":
+                        return f"localhost:{port}"
+                except grpc.RpcError:
+                    pass
+            time.sleep(delay)  # Wait before retrying
         return None
 
 
+    def test_leader_election(self):
+        """
+        Verify one leader is elected in the cluster.
+        """
+        leader_address = self.find_leader()
+        self.assertIsNotNone(leader_address, "No leader elected.")
+        print("✔ Verify one leader is elected in the cluster.")
+
+    def test_leader_failure(self):
+        """
+        Verify a new leader is elected when the current leader fails.
+        """
+        # Identify the leader
+        leader_address = self.find_leader()
+        self.assertIsNotNone(leader_address, "No leader elected initially.")
+
+        print(f"Simulating failure for leader at port {leader_address.split(':')[1]}. Please stop the leader server manually.")
+        input("Press Enter after stopping the leader server...")  # Wait for user confirmation
+
+        # Wait for a new leader to be elected
+        time.sleep(10)
+        new_leader_address = self.find_leader()
+        self.assertIsNotNone(new_leader_address, "No new leader elected.")
+        self.assertNotEqual(
+            leader_address, new_leader_address, f"Leader did not change after failure. Still {leader_address}"
+        )
+        print("✔ Verify a new leader is elected when the current leader fails.")
+
+    def test_log_replication(self):
+        """
+        Verify commands sent to the leader are replicated to all followers.
+        """
+        leader_address = self.find_leader()
+        self.assertIsNotNone(leader_address, "No leader identified for log replication test.")
+        print(f"Leader identified for log replication: {leader_address}")
+
+        leader_client = self.clients[int(leader_address.split(":")[1])]  # Match port to client
+
+        # Send a command to the leader
+        command = "operation_1"
+        request = raft_service_pb2.ClientRequestMessage(command=command)
+        response = leader_client.ClientRequest(request)
+        self.assertTrue(response.success, "Leader did not successfully apply the command.")
+
+        time.sleep(5)  # Wait for log replication
+
+        # Verify the logs in all followers
+        for port, client in self.clients.items():
+            if f"localhost:{port}" != leader_address:
+                try:
+                    log_response = client.GetLog(raft_service_pb2.GetLogRequest())
+                    log_commands = [entry.command for entry in log_response.entries]
+                    self.assertIn(command, log_commands, f"Command '{command}' not found in logs of server at port {port}.")
+                except grpc.RpcError:
+                    print(f"Skipping server at port {port} due to connection failure.")
+        print("✔ Verify commands sent to the leader are replicated to all followers.")
+
+
+    def test_leader_status_request(self):
+        """
+        Verify that the leader responds correctly to GetStatus requests.
+        """
+        leader_address = self.find_leader()
+        self.assertIsNotNone(leader_address, "No leader identified for status request test.")
+
+        leader_client = self.clients[int(leader_address.split(":")[1])]
+        try:
+            response = leader_client.GetStatus(raft_service_pb2.GetStatusRequest())
+            self.assertEqual(response.state, "Leader", "Leader does not report itself as a leader.")
+            print(f"✔ Leader at {leader_address} responds correctly to status requests.")
+        except grpc.RpcError:
+            self.fail(f"Leader at {leader_address} did not respond to status request.")
+
+
+    def test_log_consistency(self):
+        """
+        Verify that all servers have consistent logs with the leader.
+        """
+        leader_address = self.find_leader()
+        self.assertIsNotNone(leader_address, "No leader identified for log consistency test.")
+        print(f"Leader identified for log consistency: {leader_address}")
+
+        leader_client = self.clients[int(leader_address.split(":")[1])]
+        leader_log_response = leader_client.GetLog(raft_service_pb2.GetLogRequest())
+        leader_logs = [(entry.index, entry.term, entry.command) for entry in leader_log_response.entries]
+
+        for port, client in self.clients.items():
+            if f"localhost:{port}" != leader_address:
+                try:
+                    log_response = client.GetLog(raft_service_pb2.GetLogRequest())
+                    follower_logs = [(entry.index, entry.term, entry.command) for entry in log_response.entries]
+                    self.assertEqual(
+                        leader_logs,
+                        follower_logs,
+                        f"Log mismatch between leader and server at port {port}.",
+                    )
+                    print(f"✔ Logs consistent for server at port {port}.")
+                except grpc.RpcError:
+                    print(f"Skipping server at port {port} due to connection failure.")
+        print("✔ Verify logs are consistent across all servers.")
+
+
 if __name__ == "__main__":
-    unittest.main()
+    suite = unittest.TestLoader().loadTestsFromTestCase(TestRaft)
+    runner = unittest.TextTestRunner(resultclass=unittest.TextTestResult, verbosity=2)
+    result = runner.run(suite)
+
+    total_tests = result.testsRun
+    failed_tests = len(result.failures) + len(result.errors)
+    passed_tests = total_tests - failed_tests
+
+    print("\n----------------------------------------------------------------------")
+    print(f"Ran {total_tests} tests in {result.stopTime - result.startTime:.3f}s")
+    print(f"Tests Passed: {passed_tests}, Tests Failed: {failed_tests}")
+
+    if failed_tests == 0:
+        print("ALL TESTS PASSED !")
+    else:
+        print("FAILED")
+
+

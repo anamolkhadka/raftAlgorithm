@@ -92,5 +92,14 @@ The system is composed of:
 - kill -9 $(lsof -t -i :5001) to kill all process in the given port.
 
 # Running the test cases
+- Starts the Servers Manually like before. Open 5 terminals and run the following commands. 1 in each.
+- python raft_server.py 1 5001 localhost:5002 localhost:5003 localhost:5004 localhost:5005
+- python raft_server.py 2 5002 localhost:5001 localhost:5003 localhost:5004 localhost:5005
+- python raft_server.py 3 5003 localhost:5001 localhost:5002 localhost:5004 localhost:5005
+- python raft_server.py 4 5004 localhost:5001 localhost:5002 localhost:5003 localhost:5005
+- python raft_server.py 5 5005 localhost:5001 localhost:5002 localhost:5003 localhost:5004
+- Open another terminal.
 - cd raftAlgorithm/tests
 - python -m unittest test_raft.py
+- Follow the instruction. For killing the leader. Ctrl + c.
+- See the test cases results.
